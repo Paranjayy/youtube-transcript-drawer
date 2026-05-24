@@ -954,7 +954,7 @@ async function loadTranscriptForTrack(track) {
     currentLanguageCode = track.languageCode;
     renderTranscript();
   } catch (e) {
-    console.error(e);
+    console.error("[YT Extension] loadTranscriptForTrack error stack:", e.stack || e);
     showError("Could not retrieve transcript data. Try another language or refresh.");
   }
 }
