@@ -8,6 +8,7 @@ let segments = [];
 let activeSegmentIndex = -1;
 let autoScrollEnabled = true;
 let videoElement = null;
+let isCollapsed = localStorage.getItem('yt-transcript-collapsed') === 'true';
 
 // Helper to wait for DOM elements to render
 function waitForElement(selector, callback, maxAttempts = 30) {
@@ -283,6 +284,7 @@ function showError(message) {
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
       </svg>
       <div>${message}</div>
+      <div style="font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Automatically falling back to native transcript...</div>
       <button class="yt-transcript-ext-action-btn" id="yt-transcript-ext-error-native-btn" style="margin-top: 12px; background: #06b6d4; color: #0d0d0d; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; transition: all 0.15s ease;">Try Native Transcript</button>
     </div>
   `;
@@ -293,6 +295,9 @@ function showError(message) {
       openNativeTranscript();
     };
   }
+
+  // Automatically attempt native fallback
+  openNativeTranscript();
 }
 
 // Setup timeupdate listener on YouTube video element
@@ -352,6 +357,19 @@ function updateActiveHighlight() {
   }
 }
 
+// Helper to update the panel collapse class and chevron rotation
+function updateCollapseState() {
+  const panel = document.getElementById('yt-transcript-ext-panel');
+  if (!panel) return;
+  
+  panel.classList.toggle('yt-transcript-ext-collapsed', isCollapsed);
+  
+  const chevron = panel.querySelector('.yt-transcript-ext-chevron');
+  if (chevron) {
+    chevron.style.transform = isCollapsed ? 'rotate(-180deg)' : 'rotate(0deg)';
+  }
+}
+
 // Render the fully loaded transcript panel
 function renderTranscript() {
   const panel = ensurePanelInjected();
@@ -359,18 +377,23 @@ function renderTranscript() {
 
   panel.innerHTML = `
     <div class="yt-transcript-ext-header">
-      <div class="yt-transcript-ext-title-wrapper">
+      <div class="yt-transcript-ext-title-wrapper" style="cursor: pointer; select-none;">
         <svg class="yt-transcript-ext-logo" viewBox="0 0 24 24">
           <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/>
           <path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/>
         </svg>
-        <div class="yt-transcript-ext-title">Transcript</div>
+        <div class="yt-transcript-ext-title">YouTube Summary</div>
       </div>
       <div class="yt-transcript-ext-controls">
         <select class="yt-transcript-ext-select"></select>
-        <button class="yt-transcript-ext-btn yt-transcript-ext-chatgpt-btn" title="Copy & Summarize with ChatGPT">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20.73 10.37a4.99 4.99 0 0 0-.8-3.37 5.16 5.16 0 0 0-2.88-2.22 5.09 5.09 0 0 0-4.47.45 5.06 5.06 0 0 0-3.37-.8 5.16 5.16 0 0 0-2.22 2.88 5.09 5.09 0 0 0 .45 4.47 5.06 5.06 0 0 0-.8 3.37 5.16 5.16 0 0 0 2.88 2.22 5.09 5.09 0 0 0 4.47-.45 5.06 5.06 0 0 0 3.37.8 5.16 5.16 0 0 0 2.22-2.88 5.09 5.09 0 0 0-.45-4.47zm-8.73 7.82a3.3 3.3 0 0 1-1.46-.34l.05-.03 3.86-2.23a.85.85 0 0 0 .43-.75v-5.46l1.63.94a.06.06 0 0 1 .03.05v4.45a3.35 3.35 0 0 1-4.54 3.37zm-4.75-2.74a3.3 3.3 0 0 1-.34-1.46l.03.02 3.86 2.23c.23.13.5.13.73 0l4.73-2.73V15.4a.06.06 0 0 1-.03.05l-3.85 2.22a3.35 3.35 0 0 1-5.13-2.29zm-1.12-5.46a3.3 3.3 0 0 1 1.12-1.12l-.02.04-1.02 5.92a.85.85 0 0 0 0 .87l4.73 2.73-1.63.94a.06.06 0 0 1-.05 0l-3.85-2.22a3.35 3.35 0 0 1 .72-6.16zm5.13-5.13a3.3 3.3 0 0 1 1.46.34l-.05.03-3.86 2.23a.85.85 0 0 0-.43.75v5.46l-1.63-.94a.06.06 0 0 1-.03-.05V4.5a3.35 3.35 0 0 1 4.54-3.37zm4.75 2.74a3.3 3.3 0 0 1 .34 1.46l-.03-.02-3.86-2.23a.85.85 0 0 0-.73 0L8.25 8.21V6.32a.06.06 0 0 1 .03-.05l3.85-2.22a3.35 3.35 0 0 1 5.13 2.29zm1.12 5.46a3.3 3.3 0 0 1-1.12 1.12l.02-.04 1.02-5.92c.1.25.1.53 0 .78l-4.73-2.73 1.63-.94a.06.06 0 0 1 .05 0l3.85 2.22a3.35 3.35 0 0 1-.72 6.16zM10.15 13.5l1.85-1.07 1.85 1.07v2.14l-1.85 1.07-1.85-1.07V13.5z"/>
+        <button class="yt-transcript-ext-btn yt-transcript-ext-ai-toggle-btn" title="AI Summary Options">
+          <svg class="lucide lucide-bot" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8V4H8"></path>
+            <rect width="16" height="12" x="4" y="8" rx="2"></rect>
+            <path d="M2 14h2"></path>
+            <path d="M20 14h2"></path>
+            <path d="M15 13v2"></path>
+            <path d="M9 13v2"></path>
           </svg>
         </button>
         <button class="yt-transcript-ext-btn yt-transcript-ext-native-btn" title="Open Native Transcript">
@@ -388,8 +411,60 @@ function renderTranscript() {
             <path d="M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z"/>
           </svg>
         </button>
+        <button class="yt-transcript-ext-btn yt-transcript-ext-toggle-btn" title="Toggle Collapse">
+          <svg class="yt-transcript-ext-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
       </div>
     </div>
+    
+    <div class="yt-transcript-ext-ai-dropdown" style="display: none;">
+      <div class="yt-transcript-ext-ai-title">Summarize Video (Open New Tab)</div>
+      <div class="yt-transcript-ext-ai-grid">
+        <button class="yt-transcript-ext-ai-option" data-model="chatgpt" title="Copy prompt & open ChatGPT">
+          <span class="yt-transcript-ext-ai-icon-wrapper chatgpt">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.73 10.37a4.99 4.99 0 0 0-.8-3.37 5.16 5.16 0 0 0-2.88-2.22 5.09 5.09 0 0 0-4.47.45 5.06 5.06 0 0 0-3.37-.8 5.16 5.16 0 0 0-2.22 2.88 5.09 5.09 0 0 0 .45 4.47 5.06 5.06 0 0 0-.8 3.37 5.16 5.16 0 0 0 2.88 2.22 5.09 5.09 0 0 0 4.47-.45 5.06 5.06 0 0 0 3.37.8 5.16 5.16 0 0 0 2.22-2.88 5.09 5.09 0 0 0-.45-4.47zm-8.73 7.82a3.3 3.3 0 0 1-1.46-.34l.05-.03 3.86-2.23a.85.85 0 0 0 .43-.75v-5.46l1.63.94a.06.06 0 0 1 .03.05v4.45a3.35 3.35 0 0 1-4.54 3.37zm-4.75-2.74a3.3 3.3 0 0 1-.34-1.46l.03.02 3.86 2.23c.23.13.5.13.73 0l4.73-2.73V15.4a.06.06 0 0 1-.03.05l-3.85 2.22a3.35 3.35 0 0 1-5.13-2.29zm-1.12-5.46a3.3 3.3 0 0 1 1.12-1.12l-.02.04-1.02 5.92a.85.85 0 0 0 0 .87l4.73 2.73-1.63.94a.06.06 0 0 1-.05 0l-3.85-2.22a3.35 3.35 0 0 1 .72-6.16zm5.13-5.13a3.3 3.3 0 0 1 1.46.34l-.05.03-3.86 2.23a.85.85 0 0 0-.43.75v5.46l-1.63-.94a.06.06 0 0 1-.03-.05V4.5a3.35 3.35 0 0 1 4.54-3.37zm4.75 2.74a3.3 3.3 0 0 1 .34 1.46l-.03-.02-3.86-2.23a.85.85 0 0 0-.73 0L8.25 8.21V6.32a.06.06 0 0 1 .03-.05l3.85-2.22a3.35 3.35 0 0 1 5.13 2.29zm1.12 5.46a3.3 3.3 0 0 1-1.12 1.12l.02-.04 1.02-5.92c.1.25.1.53 0 .78l-4.73-2.73 1.63-.94a.06.06 0 0 1 .05 0l3.85 2.22a3.35 3.35 0 0 1-.72 6.16zM10.15 13.5l1.85-1.07 1.85 1.07v2.14l-1.85 1.07-1.85-1.07V13.5z"/>
+            </svg>
+          </span>
+          <span>ChatGPT</span>
+        </button>
+        <button class="yt-transcript-ext-ai-option" data-model="claude" title="Copy prompt & open Claude">
+          <span class="yt-transcript-ext-ai-icon-wrapper claude">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a2 2 0 0 1 2 2c0 2.2 1.8 4 4 4a2 2 0 1 1 0 4c-2.2 0-4 1.8-4 4a2 2 0 1 1-4 0c0-2.2-1.8-4-4-4a2 2 0 1 1 0-4c2.2 0 4-1.8 4-4a2 2 0 0 1 2-2z"/>
+            </svg>
+          </span>
+          <span>Claude</span>
+        </button>
+        <button class="yt-transcript-ext-ai-option" data-model="gemini" title="Copy prompt & open Gemini">
+          <span class="yt-transcript-ext-ai-icon-wrapper gemini">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2c-.3 0-.6.2-.8.5l-2.2 6.6-6.6 2.2a1 1 0 0 0 0 1.9l6.6 2.2 2.2 6.6a1 1 0 0 0 1.9 0l2.2-6.6 6.6-2.2a1 1 0 0 0 0-1.9l-6.6-2.2-2.2-6.6c-.2-.3-.5-.5-.9-.5z"/>
+            </svg>
+          </span>
+          <span>Gemini</span>
+        </button>
+        <button class="yt-transcript-ext-ai-option" data-model="aistudio" title="Copy prompt & open Google AI Studio">
+          <span class="yt-transcript-ext-ai-icon-wrapper aistudio">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4zM12 8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>
+            </svg>
+          </span>
+          <span>AI Studio</span>
+        </button>
+        <button class="yt-transcript-ext-ai-option" data-model="mistral" title="Copy prompt & open Mistral">
+          <span class="yt-transcript-ext-ai-icon-wrapper mistral">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4 4h3l5 7 5-7h3v16h-3V9l-5 7-5-7v11H4V4z"/>
+            </svg>
+          </span>
+          <span>Mistral</span>
+        </button>
+      </div>
+    </div>
+    
     <div class="yt-transcript-ext-search-container">
       <svg class="yt-transcript-ext-search-icon" viewBox="0 0 24 24">
         <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
@@ -432,32 +507,102 @@ function renderTranscript() {
     }
   };
 
-  // ChatGPT button functionality
-  const chatgptBtn = panel.querySelector('.yt-transcript-ext-chatgpt-btn');
-  chatgptBtn.onclick = async () => {
-    const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || "this video";
-    const text = segments.map(s => s.text).join(' ');
-    const promptText = `Summarize the following transcript of the YouTube video titled "${title}" in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
-    
-    try {
-      await navigator.clipboard.writeText(promptText);
-      showToast("Prompt copied! Opening ChatGPT...");
-      window.open('https://chatgpt.com/', '_blank');
-    } catch (err) {
-      console.error("ChatGPT copy failed: ", err);
-      showToast("Failed to copy transcript prompt.");
-    }
-  };
+  // Click handler on Title Wrapper to toggle collapse
+  const titleWrapper = panel.querySelector('.yt-transcript-ext-title-wrapper');
+  if (titleWrapper) {
+    titleWrapper.onclick = () => {
+      isCollapsed = !isCollapsed;
+      localStorage.setItem('yt-transcript-collapsed', isCollapsed);
+      updateCollapseState();
+    };
+  }
+
+  // Click handler on Chevron to toggle collapse
+  const toggleBtn = panel.querySelector('.yt-transcript-ext-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.onclick = () => {
+      isCollapsed = !isCollapsed;
+      localStorage.setItem('yt-transcript-collapsed', isCollapsed);
+      updateCollapseState();
+    };
+  }
+
+  // AI Toggle Button functionality
+  const aiToggleBtn = panel.querySelector('.yt-transcript-ext-ai-toggle-btn');
+  const aiDropdown = panel.querySelector('.yt-transcript-ext-ai-dropdown');
+  
+  if (aiToggleBtn && aiDropdown) {
+    aiToggleBtn.onclick = (e) => {
+      e.stopPropagation(); // Avoid triggering collapse on header click if it bubbles
+      if (isCollapsed) {
+        isCollapsed = false;
+        localStorage.setItem('yt-transcript-collapsed', isCollapsed);
+        updateCollapseState();
+      }
+      
+      const isVisible = aiDropdown.style.display !== 'none';
+      aiDropdown.style.display = isVisible ? 'none' : 'block';
+      aiToggleBtn.classList.toggle('yt-transcript-ext-icon-btn-active', !isVisible);
+    };
+  }
+
+  // AI model option buttons
+  const aiOptions = panel.querySelectorAll('.yt-transcript-ext-ai-option');
+  aiOptions.forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const model = btn.getAttribute('data-model');
+      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || "this video";
+      const text = segments.map(s => s.text).join(' ');
+      const promptText = `Summarize the following transcript of the YouTube video titled "${title}" in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
+      
+      let url = "";
+      let name = "";
+      switch (model) {
+        case 'chatgpt':
+          url = 'https://chatgpt.com/';
+          name = 'ChatGPT';
+          break;
+        case 'claude':
+          url = 'https://claude.ai/';
+          name = 'Claude';
+          break;
+        case 'gemini':
+          url = 'https://gemini.google.com/';
+          name = 'Gemini';
+          break;
+        case 'aistudio':
+          url = 'https://aistudio.google.com/';
+          name = 'Google AI Studio';
+          break;
+        case 'mistral':
+          url = 'https://chat.mistral.ai/';
+          name = 'Mistral';
+          break;
+      }
+      
+      try {
+        await navigator.clipboard.writeText(promptText);
+        showToast(`Prompt copied! Opening ${name}...`);
+        window.open(url, '_blank');
+      } catch (err) {
+        console.error("AI copy failed: ", err);
+        showToast("Failed to copy transcript prompt.");
+      }
+    };
+  });
 
   // Native UI Fallback button functionality
   const nativeBtn = panel.querySelector('.yt-transcript-ext-native-btn');
-  nativeBtn.onclick = () => {
+  nativeBtn.onclick = (e) => {
+    e.stopPropagation();
     openNativeTranscript();
   };
 
   // Copy transcript button functionality
   const copyBtn = panel.querySelector('.yt-transcript-ext-copy-btn');
-  copyBtn.onclick = async () => {
+  copyBtn.onclick = (e) => {
+    e.stopPropagation();
     const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -470,7 +615,8 @@ function renderTranscript() {
   // Auto-scroll toggle
   const scrollBtn = panel.querySelector('.yt-transcript-ext-scroll-btn');
   scrollBtn.classList.toggle('yt-transcript-ext-icon-btn-active', autoScrollEnabled);
-  scrollBtn.onclick = () => {
+  scrollBtn.onclick = (e) => {
+    e.stopPropagation();
     autoScrollEnabled = !autoScrollEnabled;
     scrollBtn.classList.toggle('yt-transcript-ext-icon-btn-active', autoScrollEnabled);
     if (autoScrollEnabled) {
@@ -517,7 +663,8 @@ function renderTranscript() {
       button.style.transform = 'translateY(0)';
       button.style.boxShadow = '0 4px 12px rgba(6, 182, 212, 0.25)';
     };
-    button.onclick = () => {
+    button.onclick = (e) => {
+      e.stopPropagation();
       extractPlaylistTranscripts(playlistVideos);
     };
     
@@ -558,6 +705,9 @@ function renderTranscript() {
 
     container.appendChild(row);
   });
+
+  // Apply initial collapse state style
+  updateCollapseState();
 
   // Setup progress syncing listeners
   setupVideoListeners();
