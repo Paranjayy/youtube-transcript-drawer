@@ -1,3 +1,4 @@
+(function() {
 // YouTube Auto-Transcript Content Script
 
 let lastVideoId = null;
@@ -1094,3 +1095,4 @@ waitForElement('#secondary', () => {
   // Request player response immediately to handshake with injected.js
   window.postMessage({ type: "REQUEST_YOUTUBE_PLAYER_RESPONSE" }, "*");
 });
+})();
