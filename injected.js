@@ -37,4 +37,11 @@
       }
     }, 200);
   });
+
+  // Listen for handshake requests from content.js (Isolated world)
+  window.addEventListener('message', (event) => {
+    if (event.source === window && event.data && event.data.type === 'REQUEST_YOUTUBE_PLAYER_RESPONSE') {
+      postPlayerResponse();
+    }
+  });
 })();

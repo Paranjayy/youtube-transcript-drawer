@@ -675,7 +675,21 @@ document.addEventListener('yt-navigate-finish', () => {
   }
 });
 
+// Listen for panel toggling from background service worker (icon click)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.action === "toggle-panel") {
+    const panel = document.getElementById('yt-transcript-ext-panel');
+    if (panel) {
+      const isHidden = panel.style.display === 'none';
+      panel.style.display = isHidden ? 'flex' : 'none';
+      showToast(isHidden ? "Transcript panel opened" : "Transcript panel closed");
+    }
+  }
+});
+
 // Run initial injection and checks
 waitForElement('#secondary', () => {
   checkPageAndTogglePanel();
+  // Request player response immediately to handshake with injected.js
+  window.postMessage({ type: "REQUEST_YOUTUBE_PLAYER_RESPONSE" }, "*");
 });
