@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "YouTube Auto-Transcript Drawer",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Automatically opens and displays a beautiful, interactive transcript panel on YouTube watch pages with playlist extraction.",
   "permissions": ["contextMenus"],
+  "host_permissions": ["https://*.youtube.com/*"],
   "action": {},
   "background": {
     "service_worker": "background.js"

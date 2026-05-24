@@ -316,6 +316,7 @@ function showLoading() {
 // Open YouTube's native transcript panel programmatically
 function openNativeTranscript() {
   let btn = querySelectorDeep('ytd-video-description-transcripts-section-renderer button') ||
+            querySelectorDeep('ytd-video-description-transcripts-section-renderer ytd-button-renderer button') ||
             Array.from(querySelectorAllDeep('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
             
   if (btn) {
@@ -325,6 +326,8 @@ function openNativeTranscript() {
   }
   
   const expandBtn = querySelectorDeep('#expand') || 
+                    querySelectorDeep('ytd-description-renderer') ||
+                    querySelectorDeep('ytd-watch-metadata #description') ||
                     querySelectorDeep('tp-yt-paper-button#more') || 
                     querySelectorDeep('.ytd-video-secondary-info-renderer #more');
                     
@@ -332,16 +335,21 @@ function openNativeTranscript() {
     expandBtn.click();
     showToast("Expanding description...");
     
-    setTimeout(() => {
+    let attempts = 0;
+    const retryInterval = setInterval(() => {
+      attempts++;
       const btnRetry = querySelectorDeep('ytd-video-description-transcripts-section-renderer button') ||
+                       querySelectorDeep('ytd-video-description-transcripts-section-renderer ytd-button-renderer button') ||
                        Array.from(querySelectorAllDeep('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
       if (btnRetry) {
+        clearInterval(retryInterval);
         btnRetry.click();
         showToast("Opened native transcript!");
-      } else {
+      } else if (attempts > 15) {
+        clearInterval(retryInterval);
         showToast("Native transcript button not found.");
       }
-    }, 400);
+    }, 200);
     return true;
   }
   
