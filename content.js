@@ -246,16 +246,26 @@ function formatTime(seconds) {
   return `${m}:${sStr}`;
 }
 
-// Ensure the extension panel exists at the top of YouTube's secondary column
+// Ensure the extension panel exists at the top of YouTube's secondary column or playlist section
 function ensurePanelInjected() {
-  const secondary = document.querySelector('#secondary');
-  if (!secondary) return null;
+  let parent = document.querySelector('#secondary');
+  let insertBeforeNode = parent ? parent.firstChild : null;
+  
+  if (!parent) {
+    // If not watch page, try to inject into playlist header column
+    parent = document.querySelector('ytd-playlist-header-renderer') ||
+             document.querySelector('#columns') ||
+             document.querySelector('#content');
+    insertBeforeNode = parent ? parent.firstChild : null;
+  }
+  
+  if (!parent) return null;
 
   let panel = document.getElementById('yt-transcript-ext-panel');
   if (!panel) {
     panel = document.createElement('div');
     panel.id = 'yt-transcript-ext-panel';
-    secondary.insertBefore(panel, secondary.firstChild);
+    parent.insertBefore(panel, insertBeforeNode);
   }
   return panel;
 }
@@ -264,9 +274,11 @@ function ensurePanelInjected() {
 function checkPageAndTogglePanel() {
   const urlParams = new URLSearchParams(window.location.search);
   const videoId = urlParams.get('v');
+  const playlistId = urlParams.get('list');
+  const isPlaylistPage = window.location.pathname === '/playlist' && playlistId;
   const panel = document.getElementById('yt-transcript-ext-panel');
   
-  if (!videoId) {
+  if (!videoId && !isPlaylistPage) {
     if (panel) {
       panel.style.display = 'none';
     }
@@ -590,6 +602,77 @@ function updateCollapseState() {
   if (chevron) {
     chevron.style.transform = isCollapsed ? 'rotate(-180deg)' : 'rotate(0deg)';
   }
+}
+
+// Render a simplified playlist panel on playlist pages
+function renderPlaylistPagePanel() {
+  const panel = ensurePanelInjected();
+  if (!panel) return;
+
+  const playlistVideos = getAllPlaylistVideos();
+
+  panel.innerHTML = `
+    <div class="yt-transcript-ext-header">
+      <div class="yt-transcript-ext-title-wrapper" style="cursor: pointer; select: none;">
+        <svg class="yt-transcript-ext-logo" viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: #06b6d4; filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.6));">
+          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/>
+          <path d="M7 9h10v2H7zm0-3h10v2H7zm0 6h7v2H7z"/>
+        </svg>
+        <div class="yt-transcript-ext-title" style="font-size: 15.5px; font-weight: 700; background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 0.3px;">Playlist Extractor</div>
+      </div>
+      <div class="yt-transcript-ext-controls">
+        <button class="yt-transcript-ext-btn yt-transcript-ext-toggle-btn" title="Toggle Collapse">
+          <svg class="yt-transcript-ext-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.3s ease;">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+      </div>
+    </div>
+    
+    <div class="yt-transcript-ext-cues-container" style="padding: 12px 0;">
+      <div class="yt-transcript-ext-message" style="padding: 20px 10px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;">
+        <div style="font-weight: bold; font-size: 14px; color: var(--yt-ext-text, #fff); margin-bottom: 6px;">Playlist Detected</div>
+        <div style="font-size: 12.5px; color: var(--yt-ext-cue-text, #aaa); margin-bottom: 16px;">Found ${playlistVideos.length} videos in this playlist. You can extract and download all transcripts as a consolidated ZIP file.</div>
+        
+        <button class="yt-transcript-ext-action-btn yt-transcript-ext-playlist-btn" style="background: linear-gradient(90deg, #00f2fe 0%, #06b6d4 100%); color: #0d0d0d; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 13px; padding: 10px 16px; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; box-shadow: 0 4px 12px rgba(6, 182, 212, 0.25); transition: all 0.2s ease;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 9H5c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V11c0-1.1-.9-2-2-2zM5 11h14v10H5V11zm10-8H9v2h6V3zm4 3H5v2h14V6z"/>
+          </svg>
+          <span>Extract Playlist ZIP</span>
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Connect toggle collapse
+  const titleWrapper = panel.querySelector('.yt-transcript-ext-title-wrapper');
+  if (titleWrapper) {
+    titleWrapper.onclick = () => {
+      isCollapsed = !isCollapsed;
+      localStorage.setItem('yt-transcript-collapsed', isCollapsed);
+      updateCollapseState();
+    };
+  }
+
+  const toggleBtn = panel.querySelector('.yt-transcript-ext-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.onclick = () => {
+      isCollapsed = !isCollapsed;
+      localStorage.setItem('yt-transcript-collapsed', isCollapsed);
+      updateCollapseState();
+    };
+  }
+
+  // Connect playlist extraction button
+  const playlistBtn = panel.querySelector('.yt-transcript-ext-playlist-btn');
+  if (playlistBtn) {
+    playlistBtn.onclick = (e) => {
+      e.stopPropagation();
+      extractPlaylistTranscripts(playlistVideos);
+    };
+  }
+
+  updateCollapseState();
 }
 
 // Render the fully loaded transcript panel
@@ -1059,12 +1142,17 @@ document.addEventListener('yt-navigate-finish', () => {
   }
   document.body.classList.remove('yt-transcript-scraped-active');
 
-  const isWatch = checkPageAndTogglePanel();
-  if (isWatch) {
-    // Check if video ID changed to clear panel details
+  const hasPanel = checkPageAndTogglePanel();
+  if (hasPanel) {
     const urlParams = new URLSearchParams(window.location.search);
     const videoId = urlParams.get('v');
-    if (videoId && videoId !== lastVideoId) {
+    const isPlaylistPage = window.location.pathname === '/playlist';
+    
+    if (isPlaylistPage) {
+      waitForElement('ytd-playlist-header-renderer, #columns', () => {
+        renderPlaylistPagePanel();
+      }, 40);
+    } else if (videoId && videoId !== lastVideoId) {
       lastVideoId = null;
       transcriptData = null;
       segments = [];
@@ -1077,22 +1165,73 @@ document.addEventListener('yt-navigate-finish', () => {
   }
 });
 
-// Listen for panel toggling from background service worker (icon click)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message && message.action === "toggle-panel") {
-    const panel = document.getElementById('yt-transcript-ext-panel');
+// Listen for panel toggling and context menu actions from background
+chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
+  if (!message) return;
+  
+  if (message.action === "toggle-panel") {
+    const panel = ensurePanelInjected() || document.getElementById('yt-transcript-ext-panel');
     if (panel) {
       const isHidden = panel.style.display === 'none';
       panel.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden && window.location.pathname === '/playlist') {
+        renderPlaylistPagePanel();
+      }
       showToast(isHidden ? "Transcript panel opened" : "Transcript panel closed");
+    }
+  } else if (message.action === "context-copy") {
+    if (segments.length > 0) {
+      const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
+      const videoUrl = window.location.href;
+      const formattedText = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
+      try {
+        await navigator.clipboard.writeText(formattedText);
+        showToast("Transcript copied!");
+      } catch (err) {
+        console.error("Context copy failed: ", err);
+        showToast("Failed to copy transcript.");
+      }
+    } else {
+      showToast("No transcript available to copy.");
+    }
+  } else if (message.action === "context-summarize") {
+    if (segments.length > 0) {
+      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "this video";
+      const videoUrl = window.location.href;
+      const text = segments.map(s => s.text).join(' ');
+      const promptText = `Summarize the following transcript of the YouTube video titled "${title}" (${videoUrl}) in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
+      try {
+        await navigator.clipboard.writeText(promptText);
+        showToast("Prompt copied! Opening ChatGPT...");
+        window.open('https://chatgpt.com/', '_blank');
+      } catch (err) {
+        console.error("Context AI copy failed: ", err);
+        showToast("Failed to copy prompt.");
+      }
+    } else {
+      showToast("No transcript available to summarize.");
+    }
+  } else if (message.action === "context-playlist") {
+    const playlistVideos = getAllPlaylistVideos();
+    if (playlistVideos.length > 0) {
+      extractPlaylistTranscripts(playlistVideos);
+    } else {
+      showToast("No playlist detected on this page.");
     }
   }
 });
 
 // Run initial injection and checks
-waitForElement('#secondary', () => {
-  checkPageAndTogglePanel();
-  // Request player response immediately to handshake with injected.js
-  window.postMessage({ type: "REQUEST_YOUTUBE_PLAYER_RESPONSE" }, "*");
+waitForElement('#secondary, ytd-playlist-header-renderer, #columns', () => {
+  const hasPanel = checkPageAndTogglePanel();
+  if (hasPanel) {
+    if (window.location.pathname === '/playlist') {
+      renderPlaylistPagePanel();
+    } else {
+      // Request player response immediately to handshake with injected.js
+      window.postMessage({ type: "REQUEST_YOUTUBE_PLAYER_RESPONSE" }, "*");
+    }
+  }
 });
 })();
