@@ -120,17 +120,38 @@ function getAllPlaylistVideos() {
   });
 }
 
-// Fetch player response for arbitrary video (background parsing)
+// Fetch player response for arbitrary video via background script to bypass CORS
 async function getPlayerResponse(videoId) {
-  const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`);
-  if (!response.ok) throw new Error("Failed to load page source");
-  const html = await response.text();
-  const regex = /ytInitialPlayerResponse\s*=\s*({.+?})\s*;\s*(?:var\s+meta|<\/script|\n)/;
-  const match = html.match(regex);
-  if (match) {
-    return JSON.parse(match[1]);
-  }
-  throw new Error("ytInitialPlayerResponse not found in source");
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: "FETCH_PLAYER_RESPONSE", videoId }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response && response.error) {
+        reject(new Error(response.error));
+      } else if (response && response.data) {
+        resolve(response.data);
+      } else {
+        reject(new Error("No response data received"));
+      }
+    });
+  });
+}
+
+// Fetch transcript JSON via background script to bypass CORS
+async function fetchTranscriptJson(url) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: "FETCH_TRANSCRIPT_JSON", url }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else if (response && response.error) {
+        reject(new Error(response.error));
+      } else if (response && response.data) {
+        resolve(response.data);
+      } else {
+        reject(new Error("No response data received"));
+      }
+    });
+  });
 }
 
 // Fetch and parse plain text transcript for batch zipping
@@ -142,9 +163,7 @@ async function fetchTranscriptText(baseUrl) {
     resolvedUrl = 'https://www.youtube.com' + resolvedUrl;
   }
   const url = resolvedUrl + '&fmt=json3';
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Fetch failed");
-  const data = await response.json();
+  const data = await fetchTranscriptJson(url);
   const textSegments = [];
   if (data && data.events) {
     for (const event of data.events) {
@@ -157,6 +176,7 @@ async function fetchTranscriptText(baseUrl) {
   }
   return textSegments.join('\n');
 }
+
 
 // Show progress UI in cues container during playlist extraction
 function showPlaylistProgress(completed, total) {
@@ -1043,9 +1063,7 @@ async function loadTranscriptForTrack(track) {
       baseUrl = 'https://www.youtube.com' + baseUrl;
     }
     const url = baseUrl + '&fmt=json3';
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("Fetch failed");
-    const data = await response.json();
+    const data = await fetchTranscriptJson(url);
 
     segments = [];
     if (data && data.events) {
