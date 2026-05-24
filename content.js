@@ -11,6 +11,7 @@ let videoElement = null;
 let isCollapsed = localStorage.getItem('yt-transcript-collapsed') === 'true';
 let nativeScrapeInterval = null;
 let nativeObserver = null;
+let loadingTimeout = null;
 
 // Deep querySelector helper to traverse shadow roots recursively
 function querySelectorDeep(selector, root = document) {
@@ -288,6 +289,15 @@ function showLoading() {
       <div>Loading transcript...</div>
     </div>
   `;
+
+  // Fallback to native after a timeout (Safari CSP workaround)
+  if (loadingTimeout) clearTimeout(loadingTimeout);
+  loadingTimeout = setTimeout(() => {
+    if (!transcriptData && segments.length === 0) {
+      console.log("[YT Extension] Handshake timed out. Falling back to native transcript drawer.");
+      showError("Could not retrieve transcript data automatically.");
+    }
+  }, 4000);
 }
 
 // Open YouTube's native transcript panel programmatically
@@ -342,6 +352,10 @@ function parseTimestampToMs(timeStr) {
 
 // Parse native YouTube transcript segment elements
 function scrapeNativeTranscriptNodes(segmentNodes) {
+  if (loadingTimeout) {
+    clearTimeout(loadingTimeout);
+    loadingTimeout = null;
+  }
   segments = [];
   segmentNodes.forEach(segment => {
     // Find timestamp using robust fallback selectors
@@ -759,9 +773,10 @@ function renderTranscript() {
     btn.onclick = async (e) => {
       e.stopPropagation();
       const model = btn.getAttribute('data-model');
-      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || "this video";
+      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "this video";
+      const videoUrl = window.location.href;
       const text = segments.map(s => s.text).join(' ');
-      const promptText = `Summarize the following transcript of the YouTube video titled "${title}" in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
+      const promptText = `Summarize the following transcript of the YouTube video titled "${title}" (${videoUrl}) in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
       
       let url = "";
       let name = "";
@@ -811,11 +826,15 @@ function renderTranscript() {
   copyBtn.onclick = async (e) => {
     e.stopPropagation();
     const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+    const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
+    const videoUrl = window.location.href;
+    const formattedText = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
     try {
-      await navigator.clipboard.writeText(text);
-      showToast("Transcript copied!");
+      await navigator.clipboard.writeText(formattedText);
+      showToast("Transcript copied with Title & URL!");
     } catch (err) {
       console.error("Clipboard copy failed: ", err);
+      showToast("Failed to copy transcript.");
     }
   };
 
@@ -977,6 +996,10 @@ function showToast(message) {
 
 // Handle data passed from page context
 async function handlePlayerResponse(videoId, playerResponse) {
+  if (loadingTimeout) {
+    clearTimeout(loadingTimeout);
+    loadingTimeout = null;
+  }
   if (!videoId) return;
 
   const isWatch = checkPageAndTogglePanel();
@@ -1020,6 +1043,10 @@ window.addEventListener('message', (event) => {
 
 // Setup on navigation completion
 document.addEventListener('yt-navigate-finish', () => {
+  if (loadingTimeout) {
+    clearTimeout(loadingTimeout);
+    loadingTimeout = null;
+  }
   // Clear any active native scraping resources
   if (nativeScrapeInterval) {
     clearInterval(nativeScrapeInterval);
