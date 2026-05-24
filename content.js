@@ -12,6 +12,51 @@ let isCollapsed = localStorage.getItem('yt-transcript-collapsed') === 'true';
 let nativeScrapeInterval = null;
 let nativeObserver = null;
 
+// Deep querySelector helper to traverse shadow roots recursively
+function querySelectorDeep(selector, root = document) {
+  const direct = root.querySelector(selector);
+  if (direct) return direct;
+  
+  let found = null;
+  const traverse = (node) => {
+    if (found) return;
+    if (node.shadowRoot) {
+      found = node.shadowRoot.querySelector(selector);
+      if (found) return;
+      Array.from(node.shadowRoot.querySelectorAll('*')).forEach(traverse);
+    }
+  };
+  
+  if (root.shadowRoot) {
+    found = root.shadowRoot.querySelector(selector);
+    if (found) return found;
+    Array.from(root.shadowRoot.querySelectorAll('*')).forEach(traverse);
+  }
+  
+  Array.from(root.querySelectorAll('*')).forEach(traverse);
+  return found;
+}
+
+// Deep querySelectorAll helper to traverse shadow roots recursively
+function querySelectorAllDeep(selector, root = document) {
+  let elements = Array.from(root.querySelectorAll(selector));
+  
+  const traverse = (node) => {
+    if (node.shadowRoot) {
+      elements = elements.concat(Array.from(node.shadowRoot.querySelectorAll(selector)));
+      Array.from(node.shadowRoot.querySelectorAll('*')).forEach(traverse);
+    }
+  };
+  
+  if (root.shadowRoot) {
+    elements = elements.concat(Array.from(root.shadowRoot.querySelectorAll(selector)));
+    Array.from(root.shadowRoot.querySelectorAll('*')).forEach(traverse);
+  }
+  
+  Array.from(root.querySelectorAll('*')).forEach(traverse);
+  return elements;
+}
+
 // Helper to wait for DOM elements to render
 function waitForElement(selector, callback, maxAttempts = 30) {
   let attempts = 0;
@@ -247,8 +292,8 @@ function showLoading() {
 
 // Open YouTube's native transcript panel programmatically
 function openNativeTranscript() {
-  let btn = document.querySelector('ytd-video-description-transcripts-section-renderer button') ||
-            Array.from(document.querySelectorAll('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
+  let btn = querySelectorDeep('ytd-video-description-transcripts-section-renderer button') ||
+            Array.from(querySelectorAllDeep('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
             
   if (btn) {
     btn.click();
@@ -256,17 +301,17 @@ function openNativeTranscript() {
     return true;
   }
   
-  const expandBtn = document.querySelector('#expand') || 
-                    document.querySelector('tp-yt-paper-button#more') || 
-                    document.querySelector('.ytd-video-secondary-info-renderer #more');
+  const expandBtn = querySelectorDeep('#expand') || 
+                    querySelectorDeep('tp-yt-paper-button#more') || 
+                    querySelectorDeep('.ytd-video-secondary-info-renderer #more');
                     
   if (expandBtn) {
     expandBtn.click();
     showToast("Expanding description...");
     
     setTimeout(() => {
-      const btnRetry = document.querySelector('ytd-video-description-transcripts-section-renderer button') ||
-                       Array.from(document.querySelectorAll('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
+      const btnRetry = querySelectorDeep('ytd-video-description-transcripts-section-renderer button') ||
+                       Array.from(querySelectorAllDeep('button')).find(el => el.textContent && el.textContent.includes('Show transcript'));
       if (btnRetry) {
         btnRetry.click();
         showToast("Opened native transcript!");
@@ -300,23 +345,25 @@ function scrapeNativeTranscriptNodes(segmentNodes) {
   segments = [];
   segmentNodes.forEach(segment => {
     // Find timestamp using robust fallback selectors
-    const timestampEl = segment.querySelector('.segment-timestamp') || 
-                        segment.querySelector('[class*="timestamp"]') ||
-                        Array.from(segment.querySelectorAll('*')).find(el => /^\d+:\d+/.test(el.textContent.trim()));
+    const timestampEl = querySelectorDeep('.segment-timestamp', segment) || 
+                        querySelectorDeep('[class*="timestamp"]', segment) ||
+                        Array.from(segment.querySelectorAll('*'))
+                          .concat(segment.shadowRoot ? Array.from(segment.shadowRoot.querySelectorAll('*')) : [])
+                          .find(el => /^\d+:\d+/.test(el.textContent.trim()));
     const timeStr = timestampEl ? timestampEl.textContent.trim() : "";
     
     // Find text using robust fallback selectors
-    const textEl = segment.querySelector('.segment-text') || 
-                   segment.querySelector('[class*="text"]') ||
-                   Array.from(segment.querySelectorAll('*')).find(el => el !== timestampEl && el.textContent.trim().length > 0);
+    const textEl = querySelectorDeep('.segment-text', segment) || 
+                   querySelectorDeep('[class*="text"]', segment);
     
     let text = "";
     if (textEl) {
       text = textEl.textContent.trim();
-    } else if (timestampEl) {
-      text = segment.textContent.replace(timeStr, "").trim();
     } else {
-      text = segment.textContent.trim();
+      const lightText = segment.textContent.trim();
+      const shadowText = segment.shadowRoot ? segment.shadowRoot.textContent.trim() : "";
+      const fullText = (lightText + " " + shadowText).trim();
+      text = fullText.replace(timeStr, "").trim().replace(/\s+/g, ' ');
     }
     
     if (timeStr && text) {
@@ -358,7 +405,7 @@ function startNativeScraping() {
   if (nativeScrapeInterval) clearInterval(nativeScrapeInterval);
   
   // Show progress feedback
-  const fallbackStatus = document.querySelector('.yt-transcript-ext-fallback-status');
+  const fallbackStatus = querySelectorDeep('.yt-transcript-ext-fallback-status');
   if (fallbackStatus) {
     fallbackStatus.textContent = "Attempting native transcript extraction...";
   }
@@ -366,7 +413,7 @@ function startNativeScraping() {
   let attempts = 0;
   nativeScrapeInterval = setInterval(() => {
     attempts++;
-    const segmentNodes = document.querySelectorAll('ytd-transcript-segment-renderer');
+    const segmentNodes = querySelectorAllDeep('ytd-transcript-segment-renderer');
     
     if (segmentNodes.length > 0) {
       clearInterval(nativeScrapeInterval);
@@ -376,7 +423,7 @@ function startNativeScraping() {
       clearInterval(nativeScrapeInterval);
       nativeScrapeInterval = null;
       // Do not loop infinitely if native is truly missing
-      const statusEl = document.querySelector('.yt-transcript-ext-fallback-status');
+      const statusEl = querySelectorDeep('.yt-transcript-ext-fallback-status');
       if (statusEl) {
         statusEl.textContent = "Extraction failed. No native transcript available.";
       }
@@ -388,31 +435,33 @@ function startNativeScraping() {
 function setupNativeObserver() {
   if (nativeObserver) nativeObserver.disconnect();
   
-  const container = document.querySelector('ytd-transcript-renderer #segments-container') || 
-                    document.querySelector('ytd-transcript-renderer');
+  const container = querySelectorDeep('ytd-transcript-renderer #segments-container') || 
+                    querySelectorDeep('ytd-transcript-renderer');
   if (!container) return;
   
   nativeObserver = new MutationObserver(() => {
-    const nodes = document.querySelectorAll('ytd-transcript-segment-renderer');
+    const nodes = querySelectorAllDeep('ytd-transcript-segment-renderer');
     if (nodes.length > 0) {
       segments = [];
       nodes.forEach(segment => {
-        const timestampEl = segment.querySelector('.segment-timestamp') || 
-                            segment.querySelector('[class*="timestamp"]') ||
-                            Array.from(segment.querySelectorAll('*')).find(el => /^\d+:\d+/.test(el.textContent.trim()));
+        const timestampEl = querySelectorDeep('.segment-timestamp', segment) || 
+                            querySelectorDeep('[class*="timestamp"]', segment) ||
+                            Array.from(segment.querySelectorAll('*'))
+                              .concat(segment.shadowRoot ? Array.from(segment.shadowRoot.querySelectorAll('*')) : [])
+                              .find(el => /^\d+:\d+/.test(el.textContent.trim()));
         const timeStr = timestampEl ? timestampEl.textContent.trim() : "";
         
-        const textEl = segment.querySelector('.segment-text') || 
-                       segment.querySelector('[class*="text"]') ||
-                       Array.from(segment.querySelectorAll('*')).find(el => el !== timestampEl && el.textContent.trim().length > 0);
+        const textEl = querySelectorDeep('.segment-text', segment) || 
+                       querySelectorDeep('[class*="text"]', segment);
         
         let text = "";
         if (textEl) {
           text = textEl.textContent.trim();
-        } else if (timestampEl) {
-          text = segment.textContent.replace(timeStr, "").trim();
         } else {
-          text = segment.textContent.trim();
+          const lightText = segment.textContent.trim();
+          const shadowText = segment.shadowRoot ? segment.shadowRoot.textContent.trim() : "";
+          const fullText = (lightText + " " + shadowText).trim();
+          text = fullText.replace(timeStr, "").trim().replace(/\s+/g, ' ');
         }
         
         if (timeStr && text) {
