@@ -1,0 +1,44 @@
+name: Build and Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release Extensions
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Create Dist Directory
+        run: mkdir -p dist
+
+      # Package standard Chromium/Firefox extension zip
+      - name: Package Chrome & Firefox Extension
+        run: |
+          zip -r dist/youtube-auto-transcript-chrome-firefox.zip . \
+            -x "*.git*" "*.DS_Store*" "dist/*" "COMPATIBILITY.md" "CHROMEWEBSTORE.md" ".github/*"
+
+      # Convert and build Safari Extension App Wrapper on macOS
+      - name: Convert Safari Web Extension
+        run: |
+          xcrun safari-web-extension-converter --no-open --app-name "YouTubeAutoTranscript" .
+          zip -r dist/youtube-auto-transcript-safari.zip YouTubeAutoTranscript/
+
+      # Create a new GitHub Release with built browser packages
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/youtube-auto-transcript-chrome-firefox.zip
+            dist/youtube-auto-transcript-safari.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
