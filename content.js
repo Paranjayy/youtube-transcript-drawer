@@ -601,7 +601,7 @@ function renderTranscript() {
 
   // Copy transcript button functionality
   const copyBtn = panel.querySelector('.yt-transcript-ext-copy-btn');
-  copyBtn.onclick = (e) => {
+  copyBtn.onclick = async (e) => {
     e.stopPropagation();
     const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
     try {
