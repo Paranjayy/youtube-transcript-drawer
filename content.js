@@ -9,6 +9,8 @@ let activeSegmentIndex = -1;
 let autoScrollEnabled = true;
 let videoElement = null;
 let isCollapsed = localStorage.getItem('yt-transcript-collapsed') === 'true';
+let nativeScrapeInterval = null;
+let nativeObserver = null;
 
 // Helper to wait for DOM elements to render
 function waitForElement(selector, callback, maxAttempts = 30) {
@@ -86,7 +88,13 @@ async function getPlayerResponse(videoId) {
 
 // Fetch and parse plain text transcript for batch zipping
 async function fetchTranscriptText(baseUrl) {
-  const url = baseUrl + '&fmt=json3';
+  let resolvedUrl = baseUrl;
+  if (resolvedUrl.startsWith('//')) {
+    resolvedUrl = 'https:' + resolvedUrl;
+  } else if (resolvedUrl.startsWith('/')) {
+    resolvedUrl = 'https://www.youtube.com' + resolvedUrl;
+  }
+  const url = resolvedUrl + '&fmt=json3';
   const response = await fetch(url);
   if (!response.ok) throw new Error("Fetch failed");
   const data = await response.json();
@@ -273,6 +281,152 @@ function openNativeTranscript() {
   return false;
 }
 
+// Convert timestamp string (M:SS or H:MM:SS) to milliseconds
+function parseTimestampToMs(timeStr) {
+  const parts = timeStr.trim().split(':').map(Number);
+  if (parts.some(isNaN)) return 0;
+  
+  let seconds = 0;
+  if (parts.length === 2) {
+    seconds = parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return seconds * 1000;
+}
+
+// Parse native YouTube transcript segment elements
+function scrapeNativeTranscriptNodes(segmentNodes) {
+  segments = [];
+  segmentNodes.forEach(segment => {
+    // Find timestamp using robust fallback selectors
+    const timestampEl = segment.querySelector('.segment-timestamp') || 
+                        segment.querySelector('[class*="timestamp"]') ||
+                        Array.from(segment.querySelectorAll('*')).find(el => /^\d+:\d+/.test(el.textContent.trim()));
+    const timeStr = timestampEl ? timestampEl.textContent.trim() : "";
+    
+    // Find text using robust fallback selectors
+    const textEl = segment.querySelector('.segment-text') || 
+                   segment.querySelector('[class*="text"]') ||
+                   Array.from(segment.querySelectorAll('*')).find(el => el !== timestampEl && el.textContent.trim().length > 0);
+    
+    let text = "";
+    if (textEl) {
+      text = textEl.textContent.trim();
+    } else if (timestampEl) {
+      text = segment.textContent.replace(timeStr, "").trim();
+    } else {
+      text = segment.textContent.trim();
+    }
+    
+    if (timeStr && text) {
+      const startMs = parseTimestampToMs(timeStr);
+      segments.push({
+        startMs,
+        text,
+        timeStr
+      });
+    }
+  });
+
+  if (segments.length > 0) {
+    // Successfully scraped! Hide the native panel cleanly
+    document.body.classList.add('yt-transcript-scraped-active');
+    
+    // Inject a fake option if captionTracks is empty to support the dropdown
+    if (captionTracks.length === 0) {
+      captionTracks = [{
+        languageCode: 'en',
+        name: { simpleText: 'Native Scraped' },
+        baseUrl: ''
+      }];
+      currentLanguageCode = 'en';
+    }
+    
+    renderTranscript();
+    showToast("Loaded transcript from YouTube player!");
+    
+    // Monitor for changes (e.g. language selection)
+    setupNativeObserver();
+  } else {
+    showError("Could not retrieve transcript data. Try another language or refresh.");
+  }
+}
+
+// Poll DOM for native transcript segment elements
+function startNativeScraping() {
+  if (nativeScrapeInterval) clearInterval(nativeScrapeInterval);
+  
+  // Show progress feedback
+  const fallbackStatus = document.querySelector('.yt-transcript-ext-fallback-status');
+  if (fallbackStatus) {
+    fallbackStatus.textContent = "Attempting native transcript extraction...";
+  }
+
+  let attempts = 0;
+  nativeScrapeInterval = setInterval(() => {
+    attempts++;
+    const segmentNodes = document.querySelectorAll('ytd-transcript-segment-renderer');
+    
+    if (segmentNodes.length > 0) {
+      clearInterval(nativeScrapeInterval);
+      nativeScrapeInterval = null;
+      scrapeNativeTranscriptNodes(segmentNodes);
+    } else if (attempts > 30) {
+      clearInterval(nativeScrapeInterval);
+      nativeScrapeInterval = null;
+      // Do not loop infinitely if native is truly missing
+      const statusEl = document.querySelector('.yt-transcript-ext-fallback-status');
+      if (statusEl) {
+        statusEl.textContent = "Extraction failed. No native transcript available.";
+      }
+    }
+  }, 400);
+}
+
+// Monitor native container mutations to resync when language changes
+function setupNativeObserver() {
+  if (nativeObserver) nativeObserver.disconnect();
+  
+  const container = document.querySelector('ytd-transcript-renderer #segments-container') || 
+                    document.querySelector('ytd-transcript-renderer');
+  if (!container) return;
+  
+  nativeObserver = new MutationObserver(() => {
+    const nodes = document.querySelectorAll('ytd-transcript-segment-renderer');
+    if (nodes.length > 0) {
+      segments = [];
+      nodes.forEach(segment => {
+        const timestampEl = segment.querySelector('.segment-timestamp') || 
+                            segment.querySelector('[class*="timestamp"]') ||
+                            Array.from(segment.querySelectorAll('*')).find(el => /^\d+:\d+/.test(el.textContent.trim()));
+        const timeStr = timestampEl ? timestampEl.textContent.trim() : "";
+        
+        const textEl = segment.querySelector('.segment-text') || 
+                       segment.querySelector('[class*="text"]') ||
+                       Array.from(segment.querySelectorAll('*')).find(el => el !== timestampEl && el.textContent.trim().length > 0);
+        
+        let text = "";
+        if (textEl) {
+          text = textEl.textContent.trim();
+        } else if (timestampEl) {
+          text = segment.textContent.replace(timeStr, "").trim();
+        } else {
+          text = segment.textContent.trim();
+        }
+        
+        if (timeStr && text) {
+          const startMs = parseTimestampToMs(timeStr);
+          segments.push({ startMs, text, timeStr });
+        }
+      });
+      renderTranscript();
+    }
+  });
+  
+  nativeObserver.observe(container, { childList: true, subtree: true });
+}
+
 // Show error state
 function showError(message) {
   const panel = ensurePanelInjected();
@@ -284,7 +438,7 @@ function showError(message) {
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
       </svg>
       <div>${message}</div>
-      <div style="font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Automatically falling back to native transcript...</div>
+      <div class="yt-transcript-ext-fallback-status" style="font-size: 11px; color: rgba(255, 255, 255, 0.5); margin-top: 4px;">Automatically falling back to native transcript...</div>
       <button class="yt-transcript-ext-action-btn" id="yt-transcript-ext-error-native-btn" style="margin-top: 12px; background: #06b6d4; color: #0d0d0d; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 12px; transition: all 0.15s ease;">Try Native Transcript</button>
     </div>
   `;
@@ -293,11 +447,15 @@ function showError(message) {
   if (errorNativeBtn) {
     errorNativeBtn.onclick = () => {
       openNativeTranscript();
+      startNativeScraping();
     };
   }
 
-  // Automatically attempt native fallback
-  openNativeTranscript();
+  // Automatically attempt native fallback and scrape
+  const success = openNativeTranscript();
+  if (success) {
+    startNativeScraping();
+  }
 }
 
 // Setup timeupdate listener on YouTube video element
@@ -718,7 +876,13 @@ function renderTranscript() {
 async function loadTranscriptForTrack(track) {
   showLoading();
   try {
-    const url = track.baseUrl + '&fmt=json3';
+    let baseUrl = track.baseUrl;
+    if (baseUrl.startsWith('//')) {
+      baseUrl = 'https:' + baseUrl;
+    } else if (baseUrl.startsWith('/')) {
+      baseUrl = 'https://www.youtube.com' + baseUrl;
+    }
+    const url = baseUrl + '&fmt=json3';
     const response = await fetch(url);
     if (!response.ok) throw new Error("Fetch failed");
     const data = await response.json();
@@ -807,6 +971,17 @@ window.addEventListener('message', (event) => {
 
 // Setup on navigation completion
 document.addEventListener('yt-navigate-finish', () => {
+  // Clear any active native scraping resources
+  if (nativeScrapeInterval) {
+    clearInterval(nativeScrapeInterval);
+    nativeScrapeInterval = null;
+  }
+  if (nativeObserver) {
+    nativeObserver.disconnect();
+    nativeObserver = null;
+  }
+  document.body.classList.remove('yt-transcript-scraped-active');
+
   const isWatch = checkPageAndTogglePanel();
   if (isWatch) {
     // Check if video ID changed to clear panel details
