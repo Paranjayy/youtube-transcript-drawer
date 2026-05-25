@@ -51,9 +51,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Handle delegated fetches for content script to bypass Safari CORS/CSP constraints
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "FETCH_PLAYER_RESPONSE") {
-    fetch(`https://www.youtube.com/watch?v=${message.videoId}`)
+    const promise = fetch(`https://www.youtube.com/watch?v=${message.videoId}`)
       .then(res => {
-        if (!res.ok) throw new Error("Failed to load page source");
+        if (!res.ok) throw new Error("Failed to load page source (" + res.status + ")");
         return res.text();
       })
       .then(html => {
@@ -62,33 +62,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (match) {
           try {
             const data = JSON.parse(match[1]);
-            sendResponse({ data });
+            return { data };
           } catch (e) {
-            sendResponse({ error: "Failed to parse player response: " + e.message });
+            return { error: "Failed to parse player response: " + e.message };
           }
         } else {
-          sendResponse({ error: "ytInitialPlayerResponse not found in source" });
+          return { error: "ytInitialPlayerResponse not found in source" };
         }
       })
       .catch(err => {
-        sendResponse({ error: err.message });
+        return { error: err.message };
       });
-    return true; // Keep message channel open
+
+    promise.then(response => {
+      sendResponse(response);
+    });
+    return promise; // Returning a Promise keeps the channel open in Safari/Firefox/modern Chrome
   }
 
   if (message.action === "FETCH_TRANSCRIPT_JSON") {
-    fetch(message.url)
+    const promise = fetch(message.url)
       .then(res => {
-        if (!res.ok) throw new Error("Fetch failed");
+        if (!res.ok) throw new Error("Fetch failed (" + res.status + ")");
         return res.json();
       })
       .then(data => {
-        sendResponse({ data });
+        return { data };
       })
       .catch(err => {
-        sendResponse({ error: err.message });
+        return { error: err.message };
       });
-    return true; // Keep message channel open
+
+    promise.then(response => {
+      sendResponse(response);
+    });
+    return promise; // Returning a Promise keeps the channel open in Safari/Firefox/modern Chrome
   }
 });
 

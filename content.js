@@ -123,9 +123,18 @@ function getAllPlaylistVideos() {
 // Fetch player response for arbitrary video via background script to bypass CORS
 async function getPlayerResponse(videoId) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: "FETCH_PLAYER_RESPONSE", videoId }, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+    console.log(`[YT Extension] Sending FETCH_PLAYER_RESPONSE for videoId: ${videoId}`);
+    const timeout = setTimeout(() => {
+      console.warn(`[YT Extension] FETCH_PLAYER_RESPONSE timed out for videoId: ${videoId}`);
+      reject(new Error("Request for FETCH_PLAYER_RESPONSE timed out after 15 seconds"));
+    }, 15000);
+
+    const api = typeof browser !== 'undefined' ? browser : chrome;
+    api.runtime.sendMessage({ action: "FETCH_PLAYER_RESPONSE", videoId }, (response) => {
+      clearTimeout(timeout);
+      console.log(`[YT Extension] Received FETCH_PLAYER_RESPONSE response for videoId: ${videoId}`, response);
+      if (api.runtime.lastError) {
+        reject(new Error(api.runtime.lastError.message));
       } else if (response && response.error) {
         reject(new Error(response.error));
       } else if (response && response.data) {
@@ -140,9 +149,18 @@ async function getPlayerResponse(videoId) {
 // Fetch transcript JSON via background script to bypass CORS
 async function fetchTranscriptJson(url) {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: "FETCH_TRANSCRIPT_JSON", url }, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+    console.log(`[YT Extension] Sending FETCH_TRANSCRIPT_JSON for url: ${url}`);
+    const timeout = setTimeout(() => {
+      console.warn(`[YT Extension] FETCH_TRANSCRIPT_JSON timed out for url: ${url}`);
+      reject(new Error("Request for FETCH_TRANSCRIPT_JSON timed out after 15 seconds"));
+    }, 15000);
+
+    const api = typeof browser !== 'undefined' ? browser : chrome;
+    api.runtime.sendMessage({ action: "FETCH_TRANSCRIPT_JSON", url }, (response) => {
+      clearTimeout(timeout);
+      console.log(`[YT Extension] Received FETCH_TRANSCRIPT_JSON response for url: ${url}`, response);
+      if (api.runtime.lastError) {
+        reject(new Error(api.runtime.lastError.message));
       } else if (response && response.error) {
         reject(new Error(response.error));
       } else if (response && response.data) {
@@ -268,15 +286,28 @@ function formatTime(seconds) {
 
 // Ensure the extension panel exists at the top of YouTube's secondary column or playlist section
 function ensurePanelInjected() {
-  let parent = document.querySelector('#secondary');
-  let insertBeforeNode = parent ? parent.firstChild : null;
-  
-  if (!parent) {
-    // If not watch page, try to inject into playlist header column
-    parent = document.querySelector('ytd-playlist-header-renderer') ||
-             document.querySelector('#columns') ||
-             document.querySelector('#content');
+  const isPlaylistPage = window.location.pathname === '/playlist';
+  let parent = null;
+  let insertBeforeNode = null;
+
+  if (isPlaylistPage) {
+    // Inject at the top of the playlist video list (right column) to prevent layout squishing
+    parent = document.querySelector('ytd-playlist-video-list-renderer') || 
+             document.querySelector('ytd-section-list-renderer') ||
+             document.querySelector('ytd-playlist-header-renderer');
     insertBeforeNode = parent ? parent.firstChild : null;
+  } else {
+    // Watch page
+    parent = document.querySelector('#secondary');
+    insertBeforeNode = parent ? parent.firstChild : null;
+    
+    if (!parent) {
+      // Fallback for theater mode or narrow screens: under watch metadata
+      parent = document.querySelector('#secondary-inner') || 
+               document.querySelector('ytd-watch-metadata') ||
+               document.querySelector('#columns');
+      insertBeforeNode = parent ? parent.firstChild : null;
+    }
   }
   
   if (!parent) return null;
@@ -285,6 +316,9 @@ function ensurePanelInjected() {
   if (!panel) {
     panel = document.createElement('div');
     panel.id = 'yt-transcript-ext-panel';
+    parent.insertBefore(panel, insertBeforeNode);
+  } else if (panel.parentNode !== parent) {
+    // Move the panel if it's currently attached to the wrong parent (e.g. from dynamic navigation)
     parent.insertBefore(panel, insertBeforeNode);
   }
   return panel;
@@ -739,6 +773,13 @@ function renderTranscript() {
             <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
           </svg>
         </button>
+        <button class="yt-transcript-ext-btn yt-transcript-ext-download-btn" title="Download Transcript (TXT)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </button>
         <button class="yt-transcript-ext-btn yt-transcript-ext-scroll-btn" title="Toggle Auto-Scroll">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             <path d="M3 18h6v-2H3v2zM3 6v2h18V6H3zm0 7h12v-2H3v2z"/>
@@ -950,6 +991,30 @@ function renderTranscript() {
     }
   };
 
+  // Download transcript button functionality
+  const downloadBtn = panel.querySelector('.yt-transcript-ext-download-btn');
+  if (downloadBtn) {
+    downloadBtn.onclick = (e) => {
+      e.stopPropagation();
+      const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+      const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
+      const videoUrl = window.location.href;
+      const fileContent = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
+      
+      const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeTitle = title.replace(/[/\\?%*:|"<>. ]/g, '_');
+      a.download = `${safeTitle}_transcript.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast("Transcript downloaded!");
+    };
+  }
+
   // Auto-scroll toggle
   const scrollBtn = panel.querySelector('.yt-transcript-ext-scroll-btn');
   scrollBtn.classList.toggle('yt-transcript-ext-icon-btn-active', autoScrollEnabled);
@@ -962,14 +1027,30 @@ function renderTranscript() {
     }
   };
 
-  // Search input filter
+  // Search input filter with text highlighting
   const searchInput = panel.querySelector('.yt-transcript-ext-input');
   searchInput.oninput = (e) => {
     const query = e.target.value.toLowerCase().trim();
     const rows = panel.querySelectorAll('.yt-transcript-ext-cue-row');
     rows.forEach((row) => {
-      const text = row.querySelector('.yt-transcript-ext-cue-text').textContent.toLowerCase();
-      row.style.display = text.includes(query) ? 'flex' : 'none';
+      const textEl = row.querySelector('.yt-transcript-ext-cue-text');
+      if (!textEl.hasAttribute('data-original-text')) {
+        textEl.setAttribute('data-original-text', textEl.textContent);
+      }
+      const originalText = textEl.getAttribute('data-original-text');
+      const originalTextLower = originalText.toLowerCase();
+      
+      if (query === '') {
+        row.style.display = 'flex';
+        textEl.textContent = originalText;
+      } else if (originalTextLower.includes(query)) {
+        row.style.display = 'flex';
+        const regex = new RegExp(`(${query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+        const highlighted = originalText.replace(regex, '<mark class="yt-transcript-ext-search-highlight" style="background: rgba(6, 182, 212, 0.3); color: inherit; padding: 1px 3px; border-radius: 3px; border-bottom: 2px solid #06b6d4;">$1</mark>');
+        textEl.innerHTML = highlighted;
+      } else {
+        row.style.display = 'none';
+      }
     });
   };
 
