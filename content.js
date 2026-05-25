@@ -5,6 +5,7 @@ let lastVideoId = null;
 let transcriptData = null;
 let currentLanguageCode = null;
 let captionTracks = [];
+let translationLanguages = [];
 let segments = [];
 let activeSegmentIndex = -1;
 let autoScrollEnabled = true;
@@ -297,16 +298,21 @@ function ensurePanelInjected() {
              document.querySelector('ytd-playlist-header-renderer');
     insertBeforeNode = parent ? parent.firstChild : null;
   } else {
-    // Watch page
-    parent = document.querySelector('#secondary');
-    insertBeforeNode = parent ? parent.firstChild : null;
-    
-    if (!parent) {
-      // Fallback for theater mode or narrow screens: under watch metadata
-      parent = document.querySelector('#secondary-inner') || 
+    // Watch page - check if secondary column is hidden (narrow screen layout)
+    const secondary = document.querySelector('#secondary');
+    const isSecondaryHidden = secondary ? (window.getComputedStyle(secondary).display === 'none' || secondary.offsetWidth === 0) : true;
+
+    if (secondary && !isSecondaryHidden) {
+      parent = secondary;
+      insertBeforeNode = parent.firstChild;
+    } else {
+      // Fallback for theater mode or narrow screens: place under the video details
+      parent = document.querySelector('#primary-inner') || 
                document.querySelector('ytd-watch-metadata') ||
                document.querySelector('#columns');
-      insertBeforeNode = parent ? parent.firstChild : null;
+      // Place it right before the comments section
+      const comments = document.querySelector('#comments');
+      insertBeforeNode = (parent && comments && parent.contains(comments)) ? comments : (parent ? parent.firstChild : null);
     }
   }
   
@@ -424,6 +430,45 @@ function parseTimestampToMs(timeStr) {
   }
   return seconds * 1000;
 }
+
+// Scrape segments from the custom panel, falling back to dynamic scraping from native drawer if inactive
+function getCopyableSegments() {
+  if (segments && segments.length > 0) {
+    return segments.map(s => ({ timeStr: s.timeStr, text: s.text }));
+  }
+
+  // Scrape native drawer on the fly
+  const nodes = querySelectorAllDeep('ytd-transcript-segment-renderer');
+  if (nodes.length > 0) {
+    const scraped = [];
+    nodes.forEach(segment => {
+      const timestampEl = querySelectorDeep('.segment-timestamp', segment) || 
+                          querySelectorDeep('[class*="timestamp"]', segment) ||
+                          Array.from(segment.querySelectorAll('*'))
+                            .concat(segment.shadowRoot ? Array.from(segment.shadowRoot.querySelectorAll('*')) : [])
+                            .find(el => /^\d+:\d+/.test(el.textContent.trim()));
+      const timeStr = timestampEl ? timestampEl.textContent.trim() : "";
+      
+      const textEl = querySelectorDeep('.segment-text', segment) || 
+                     querySelectorDeep('[class*="text"]', segment);
+      let text = "";
+      if (textEl) {
+        text = textEl.textContent.trim();
+      } else {
+        const lightText = segment.textContent.trim();
+        const shadowText = segment.shadowRoot ? segment.shadowRoot.textContent.trim() : "";
+        text = (lightText + " " + shadowText).replace(timeStr, "").trim().replace(/\s+/g, ' ');
+      }
+      
+      if (timeStr && text) {
+        scraped.push({ timeStr, text });
+      }
+    });
+    return scraped;
+  }
+  return [];
+}
+
 
 // Parse native YouTube transcript segment elements
 function scrapeNativeTranscriptNodes(segmentNodes) {
@@ -874,10 +919,46 @@ function renderTranscript() {
     select.appendChild(option);
   });
 
+  // Populate translation options if available
+  if (translationLanguages && translationLanguages.length > 0) {
+    const separator = document.createElement('option');
+    separator.disabled = true;
+    separator.textContent = "─── Translate To ───";
+    select.appendChild(separator);
+
+    translationLanguages.forEach((lang) => {
+      const option = document.createElement('option');
+      option.value = `translate:${lang.languageCode}`;
+      
+      let langName = lang.languageName?.simpleText || lang.languageName || lang.languageCode;
+      option.textContent = `${langName} (translated)`;
+      
+      if (currentLanguageCode === `translate:${lang.languageCode}`) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+  }
+
   select.onchange = (e) => {
-    const track = captionTracks.find(t => t.languageCode === e.target.value);
-    if (track) {
-      loadTranscriptForTrack(track);
+    const val = e.target.value;
+    if (val.startsWith('translate:')) {
+      const langCode = val.split(':')[1];
+      const englishTrack = captionTracks.find(t => t.languageCode === 'en');
+      const defaultTrack = englishTrack || captionTracks[0];
+      if (defaultTrack) {
+        const translatedTrack = {
+          ...defaultTrack,
+          languageCode: val,
+          baseUrl: defaultTrack.baseUrl + `&tlang=${langCode}`
+        };
+        loadTranscriptForTrack(translatedTrack);
+      }
+    } else {
+      const track = captionTracks.find(t => t.languageCode === val);
+      if (track) {
+        loadTranscriptForTrack(track);
+      }
     }
   };
 
@@ -928,7 +1009,13 @@ function renderTranscript() {
       const model = btn.getAttribute('data-model');
       const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "this video";
       const videoUrl = window.location.href;
-      const text = segments.map(s => s.text).join(' ');
+      
+      const activeSegments = getCopyableSegments();
+      if (activeSegments.length === 0) {
+        showToast("No transcript available to summarize.");
+        return;
+      }
+      const text = activeSegments.map(s => s.text).join(' ');
       const promptText = `Summarize the following transcript of the YouTube video titled "${title}" (${videoUrl}) in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
       
       let url = "";
@@ -978,7 +1065,12 @@ function renderTranscript() {
   const copyBtn = panel.querySelector('.yt-transcript-ext-copy-btn');
   copyBtn.onclick = async (e) => {
     e.stopPropagation();
-    const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+    const activeSegments = getCopyableSegments();
+    if (activeSegments.length === 0) {
+      showToast("No transcript available to copy.");
+      return;
+    }
+    const text = activeSegments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
     const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
     const videoUrl = window.location.href;
     const formattedText = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
@@ -996,7 +1088,12 @@ function renderTranscript() {
   if (downloadBtn) {
     downloadBtn.onclick = (e) => {
       e.stopPropagation();
-      const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+      const activeSegments = getCopyableSegments();
+      if (activeSegments.length === 0) {
+        showToast("No transcript available to download.");
+        return;
+      }
+      const text = activeSegments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
       const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
       const videoUrl = window.location.href;
       const fileContent = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
@@ -1212,6 +1309,12 @@ async function handlePlayerResponse(videoId, playerResponse) {
     captionTracks = [];
   }
 
+  try {
+    translationLanguages = playerResponse.captions.playerCaptionsTracklistRenderer.translationLanguages || [];
+  } catch (e) {
+    translationLanguages = [];
+  }
+
   if (captionTracks.length === 0) {
     showError("No captions/transcripts available for this video.");
     return;
@@ -1287,8 +1390,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       showToast(isHidden ? "Transcript panel opened" : "Transcript panel closed");
     }
   } else if (message.action === "context-copy") {
-    if (segments.length > 0) {
-      const text = segments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+    const activeSegments = getCopyableSegments();
+    if (activeSegments.length > 0) {
+      const text = activeSegments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
       const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
       const videoUrl = window.location.href;
       const formattedText = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
@@ -1303,10 +1407,11 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       showToast("No transcript available to copy.");
     }
   } else if (message.action === "context-summarize") {
-    if (segments.length > 0) {
+    const activeSegments = getCopyableSegments();
+    if (activeSegments.length > 0) {
       const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "this video";
       const videoUrl = window.location.href;
-      const text = segments.map(s => s.text).join(' ');
+      const text = activeSegments.map(s => s.text).join(' ');
       const promptText = `Summarize the following transcript of the YouTube video titled "${title}" (${videoUrl}) in 5 clear and concise bullet points. Include key takeaways and actionable insights:\n\n${text}`;
       try {
         await navigator.clipboard.writeText(promptText);
@@ -1327,6 +1432,19 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       showToast("No playlist detected on this page.");
     }
   }
+});
+
+// Relocate panel dynamically on window resize (between sidebar and primary column layout)
+let resizeTimeout = null;
+window.addEventListener('resize', () => {
+  if (window.location.pathname === '/playlist') return;
+  const panel = document.getElementById('yt-transcript-ext-panel');
+  if (!panel || panel.style.display === 'none') return;
+  
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    ensurePanelInjected();
+  }, 250);
 });
 
 // Run initial injection and checks
