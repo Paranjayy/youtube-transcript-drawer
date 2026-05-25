@@ -469,6 +469,74 @@ function getCopyableSegments() {
   return [];
 }
 
+// Inject a "Copy Transcript" button inside YouTube's native transcript drawer header
+function injectNativeCopyButton() {
+  const nativePanel = querySelectorDeep('ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]');
+  if (!nativePanel) return;
+
+  const closeBtnWrapper = querySelectorDeep('#close-button', nativePanel) || 
+                          querySelectorDeep('yt-icon-button[id="visibility-button"]', nativePanel);
+  if (!closeBtnWrapper) return;
+
+  const headerControls = closeBtnWrapper.parentNode;
+  if (!headerControls) return;
+
+  if (headerControls.querySelector('.yt-transcript-ext-native-header-copy-btn')) return;
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'yt-transcript-ext-native-header-copy-btn';
+  copyBtn.title = "Copy Transcript";
+  copyBtn.style.cssText = `
+    background: none;
+    border: none;
+    color: var(--yt-spec-text-primary, #fff);
+    cursor: pointer;
+    padding: 8px;
+    margin-right: 4px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    vertical-align: middle;
+  `;
+  
+  copyBtn.innerHTML = `
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/>
+    </svg>
+  `;
+
+  copyBtn.onmouseenter = () => {
+    copyBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+  };
+  copyBtn.onmouseleave = () => {
+    copyBtn.style.background = 'none';
+  };
+
+  copyBtn.onclick = async (e) => {
+    e.stopPropagation();
+    const activeSegments = getCopyableSegments();
+    if (activeSegments.length === 0) {
+      showToast("No transcript available to copy.");
+      return;
+    }
+    const text = activeSegments.map(s => `[${s.timeStr}] ${s.text}`).join('\n');
+    const title = document.querySelector('h1.ytd-watch-metadata')?.textContent?.trim() || document.title.replace(" - YouTube", "") || "YouTube Video";
+    const videoUrl = window.location.href;
+    const formattedText = `Title: ${title}\nURL: ${videoUrl}\n\n${text}`;
+    try {
+      await navigator.clipboard.writeText(formattedText);
+      showToast("Transcript copied!");
+    } catch (err) {
+      console.error("Native copy failed: ", err);
+      showToast("Failed to copy transcript.");
+    }
+  };
+
+  headerControls.insertBefore(copyBtn, closeBtnWrapper);
+}
+
 
 // Parse native YouTube transcript segment elements
 function scrapeNativeTranscriptNodes(segmentNodes) {
@@ -1446,6 +1514,13 @@ window.addEventListener('resize', () => {
     ensurePanelInjected();
   }, 250);
 });
+
+// Monitor and inject Copy button into YouTube's native transcript header if visible
+setInterval(() => {
+  if (window.location.pathname !== '/watch') return;
+  injectNativeCopyButton();
+}, 1000);
+
 
 // Run initial injection and checks
 waitForElement('#secondary, ytd-playlist-header-renderer, #columns', () => {
